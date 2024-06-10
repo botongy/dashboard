@@ -1,24 +1,42 @@
+import os
 import dash
 import dash_bootstrap_components as dbc
 from dash import dcc, html, Input, Output, State
 import plotly.express as px
 import pandas as pd
-from pymongo import MongoClient
+from pymongo import MongoClient, errors
 from bson.objectid import ObjectId
+import logging
 
-# MongoDB connection
-client = MongoClient('mongodb+srv://botongyuan00:Wojiaoybt1220@cluster0.okmf3dv.mongodb.net/')
-db = client['Sample']
-collection = db['Data']
+# Setup logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+# MongoDB connection using environment variable
+MONGO_URI = os.getenv('MONGO_URI')
+
+# Log the MongoDB URI (or part of it) to ensure it's being read correctly
+logger.debug(f'MONGO_URI: {MONGO_URI[:20]}...')
+
+try:
+    client = MongoClient(MONGO_URI)
+    db = client['Sample']
+    collection = db['Data']
+except errors.ConnectionError as e:
+    logger.error(f"Failed to connect to MongoDB: {e}")
+    raise
 
 # Fetch data from MongoDB
 def fetch_data():
-    data = list(collection.find())
-    return pd.DataFrame(data)
+    try:
+        data = list(collection.find())
+        return pd.DataFrame(data)
+    except errors.PyMongoError as e:
+        logger.error(f"Failed to fetch data from MongoDB: {e}")
+        return pd.DataFrame()
 
 # Dash app setup
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-
 server = app.server
 
 # Layout of the app
@@ -70,12 +88,15 @@ def update_graph(add_clicks, update_clicks, delete_clicks, name, value, update_i
 
     button_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
-    if button_id == 'add-button' and name and value is not None:
-        collection.insert_one({'name': name, 'value': value})
-    elif button_id == 'update-button' and update_id and update_name and update_value is not None:
-        collection.update_one({'_id': ObjectId(update_id)}, {"$set": {'name': update_name, 'value': update_value}})
-    elif button_id == 'delete-button' and delete_id:
-        collection.delete_one({'_id': ObjectId(delete_id)})
+    try:
+        if button_id == 'add-button' and name and value is not None:
+            collection.insert_one({'name': name, 'value': value})
+        elif button_id == 'update-button' and update_id and update_name and update_value is not None:
+            collection.update_one({'_id': ObjectId(update_id)}, {"$set": {'name': update_name, 'value': update_value}})
+        elif button_id == 'delete-button' and delete_id:
+            collection.delete_one({'_id': ObjectId(delete_id)})
+    except errors.PyMongoError as e:
+        logger.error(f"Failed to modify data in MongoDB: {e}")
 
     df = fetch_data()
     if df.empty:
